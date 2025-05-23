@@ -62,7 +62,7 @@ except AttributeError as e:
     print(e)
 ```
 
-    'A' object has no attribute 'val'
+    'A' object has no attribute 'val' (accessed from alias)
     
 
 In addition, an alias of a method can be defined in the same way:
@@ -97,21 +97,22 @@ class FamilyMember:
 
     paternal_grandmother = Alias('father.mother')
 
-Shmi_Skywalker = FamilyMember('Shmi Skywalker')
-Anakin_Skywalker = FamilyMember('Anakin Skywalker', mother=Shmi_Skywalker)
-Luke_Skywalker = FamilyMember('Luke Skywalker', father=Anakin_Skywalker)
+shmi = FamilyMember('Shmi Skywalker')
+anakin = FamilyMember('Anakin Skywalker', mother=shmi)
+luke = FamilyMember('Luke Skywalker', father=anakin)
 
-print(f"{Luke_Skywalker.paternal_grandmother = }")
+print(f"{luke.paternal_grandmother.name = }")
 ```
 
-    Luke_Skywalker.paternal_grandmother = FamilyMember(name='Shmi Skywalker', father=None, mother=None)
+    luke.paternal_grandmother.name = 'Shmi Skywalker'
     
 
-### ``OperableProperty`` and ``Result``
+### ``OperableProperty``
 
-These two descriptors allow the creation of attributes that are the result of an operation on other attributes of the class. This is already possible in Python using the ``@property`` decorator, but these descriptors make these definitions more readable and less boilerplate for simple cases. In the following example, a similar behaviour is implemented twice, once using the ``@property`` decorator and once using the descriptors defined in this module.
+The descriptor ``OperableProperty`` allows the creation of attributes and then to do operations on these attributes to declare properties of the class. These expressions are then only evaluated at runtime, thus taking into account any updates. 
 
-#### Example
+This is already possible in Python using the ``@property`` decorator, but this descriptors makes these definitions more readable and less boilerplate for simple cases. In the following example, a similar behaviour is implemented twice, once using the ``@property`` decorator and once using ``OperableProperty``.
+
 First, using ``@property``
 
 
@@ -177,6 +178,8 @@ print(f"{d.d6 = }")
     d.d6 = 3.0
     
 
+Here, these two examples are just as long, but in practical applications the second example is more easily readable, especially if the number of properties is high.
+
 Also, these descriptors are compatble with the ``@dataclass`` decorator:
 
 
@@ -204,8 +207,6 @@ print(f"{e.e6 = }")
     e.e6 = 3.0
     
 
-Here, these two examples are just as long, but in practical applications the second example is more easily readable, especially if the number of properties is high.
-
 It is worth noting that:
 - It is possible to chain operations,
 - It is possible to reference the result of an expression in another expression,
@@ -225,12 +226,16 @@ class Person:
     # two additions are chained : no issue
     # ' ' is a constant, no issue
     
-    age = datetime.now() - date_of_birth
+    age_timedelta = datetime.now() - date_of_birth
     # Most types that support common operators are fine
+
+    age = Alias('age_timedelta.days') / 364.2425
+    # Access to age_timedelta.days with an alias, and 
+    # divide by 365.2425, which is the number of days in a year
 
     nickname = name + ' a.k.a. Darth Vader'
     # Reference to name, which is already defined by an expression
-    
+
     
 p = Person(
     first_name='Anakin', 
@@ -239,21 +244,17 @@ p = Person(
 )
 print(f'{p.name = }')
 print(f'{p.nickname = }')
-print(f'{p.age = }') # This timedelta is not pretty but it works
+print(f'{p.age = :.1f} years old')
 ```
 
     p.name = 'Anakin Skywalker'
     p.nickname = 'Anakin Skywalker a.k.a. Darth Vader'
-    p.age = datetime.timedelta(days=9353, seconds=77033, microseconds=957460)
+    p.age = 25.7 years old
     
 
-### Inheritance
+### Class inheritance and ``OperableProperty``
 
-The behaviour of the decscriptors is slightly modified in case of class inheritance.
-- The ``OperableProperty`` of the parent class must be accessed via the parent class itself
-- The properties that have to be defined by the child class can be accessed by using a string starting with '@' (hardcoded). This raises an error if the property is accessed, but it doesn't prevent the class from being instanced.
-
-Example:
+The behaviour of ``OperableProperty`` is slightly modified in case of class inheritance, since the instances are only available in the namespace they are declared in. In that case, an attribute can be accessed using ``Alias`` as follows:
 
 
 ```python
@@ -262,13 +263,13 @@ class LightSaber:
     owner: str = OperableProperty()
 
     # Access RedSaber.color using '@color'
-    exclamation = owner + ' wields a ' + '@color' + ' lightsaber !'
+    exclamation = owner + ' wields a ' + Alias('color') + ' lightsaber !'
 
 class RedSaber(LightSaber):
     color = 'red'
 
     # Access LightSaber.owner by name
-    interrogation = "Is That " + LightSaber.owner + "'s saber ?"
+    interrogation = "Is That " + Alias('owner') + "'s saber ?"
 
 vador_saber = RedSaber('Darth Vador')
 
@@ -280,6 +281,62 @@ print(f'{vador_saber.interrogation = }')
     vador_saber.interrogation = "Is That Darth Vador's saber ?"
     
 
+Note that in that case ``color`` is not an attribute of the ``Lightsaber`` class, thus trying to print ``exclamation`` raises an error:
+
+
+```python
+try:
+    print(LightSaber('Obi Wan Kenobi').exclamation)
+except AttributeError as e:
+    print(e)
+```
+
+    'LightSaber' object has no attribute 'color' (accessed from alias)
+    
+
+### Advanced example using ``Result``
+
+Some advanced applications are possible using the ``Result`` descriptor. This descriptor takes a ``Callable`` and any numer of argument and keyword arguments as an expression:
+
+
+```python
+from descriptors import Result
+import math
+
+@dataclass
+class Angle:
+    value_degree: float = OperableProperty()
+
+    value_radian = Result(math.radians, value_degree)
+    # Apply the function math.radians to Angle.value_degree
+
+    value_radian_rounded = Result(
+        lambda x: (lambda n : round(x, n)),
+        value_radian,
+    )
+    # Create a method of Angle that rounds value_radian to the 
+    # given number of digits
+
+theta = Angle(45) # 45°
+
+print(f"{theta.value_radian = } rad")
+print(f"{theta.value_radian_rounded(2) = } rad (approximately)")
+```
+
+    theta.value_radian = 0.7853981633974483 rad
+    theta.value_radian_rounded(2) = 0.79 rad (approximately)
+    
+
+## Ethical considerations
+
+"They spent so much time wondering if they could, that they forgot to ask themself if they should"
+
+So should you use this module ? Honestly, probably not. I'm pretty sure there are some cases where the behaviours of these descriptors would make things harder to read, particularly when using ``Result`` directly. Plus, there is always an edge case that breaks everything, but I haven't found it yet.
+
+In addition, These descriptors kind of change the behaviour of Python in a way that an end user or another programmer might not forsee, which is an issue. Also, you probably shouldn't want to define aliases in your code for any other reason than backward compatibility, and even then it is probably better (more pythonic) to create a wrapper class.
+
+Still, these descriptors work quite well for some simple applications and helped me make one of my projects more readable. As long as everyone is adult and consenting, I guess it's fine.
+
 ## Installation
 
-Just copy and paste it, I won't judge you.
+Just copy and paste the descriptors.py file, I won't judge you.
